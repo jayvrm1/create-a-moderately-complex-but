@@ -1,129 +1,116 @@
-import {
-  AgeValue,
-  ConfidenceMeter,
-  EmptyState,
-  Panel,
-  ReachBadge,
-  ScoreBreakdown,
-  SeverityTag,
-  StatusTag,
-  UrgencyMeter,
-} from './ui.jsx';
-import { formatAge, formatDateTime, formatPeople, formatPct } from '../lib/format.js';
+import { ConfidenceBar, Empty, Panel, ReachTag, ScoreMeter, SeverityTag, StatusTag } from './ui.jsx';
+import { formatAge, formatDateTime, formatPct } from '../lib/format.js';
 import { SEVERITY_META, urgencyBand } from '../lib/simulation.js';
 
-export default function ReportDetail({ report, rank, total, onClear, onInspectNetwork, teams }) {
+export default function ReportDetail({ report, rank, total, teams, onClear, compact = false }) {
   if (!report) {
     return (
-      <Panel kicker="SELECTED REPORT // DETAIL" title="Report detail">
-        <EmptyState title="No report selected" icon="dash">
-          Choose a marker on the schematic map or a row in the priority queue to inspect its details, reachability and
-          priority reasoning.
-        </EmptyState>
+      <Panel kicker="SELECTED REPORT" title="No report selected">
+        <Empty title="Nothing selected">
+          Pick a report symbol on the map or a row in the priority queue to inspect details, simulated reachability and
+          the priority explanation.
+        </Empty>
       </Panel>
     );
   }
 
   const band = urgencyBand(report.ranked.score);
   const assignedTeam = teams.find((team) => team.id === report.assignedTeam);
-  const topFactors = [...report.ranked.parts].sort((a, b) => b.value - a.value).slice(0, 2);
+  const contributors = [...report.ranked.parts].sort((a, b) => b.value - a.value);
 
   return (
     <Panel
-      kicker="SELECTED REPORT // DETAIL"
-      title="Report detail"
-      aside={<span className="detail-rank">{rank ? `QUEUE #${rank} OF ${total}` : 'ASSIGNED'}</span>}
+      kicker="SELECTED REPORT"
+      title={`${report.id} · ${report.site}`}
+      aside={rank ? <span className="pnl-chip">QUEUE #{rank}/{total}</span> : <span className="pnl-chip">ASSIGNED</span>}
+      dense={compact}
     >
-      <div className="detail-head">
-        <div>
-          <p className="detail-id">{report.id}</p>
-          <p className="detail-site">{report.site}</p>
-        </div>
-        <div className="detail-head-tags">
-          <SeverityTag severity={report.severity} />
-          <StatusTag status={report.status} />
-        </div>
+      <div className="detail-tags">
+        <SeverityTag severity={report.severity} />
+        <StatusTag tone={report.status === 'open' ? 'warn' : 'ok'}>
+          {report.status === 'open' ? 'AWAITING DISPATCH' : 'ASSIGNED'}
+        </StatusTag>
+        <ReachTag reachability={report.reachability} />
       </div>
 
       <dl className="detail-grid">
         <div>
           <dt>People</dt>
-          <dd>{formatPeople(report.people)}</dd>
+          <dd>{report.people}</dd>
+        </div>
+        <div>
+          <dt>Waiting</dt>
+          <dd>{formatAge(report.ageMinutes)}</dd>
         </div>
         <div>
           <dt>Received</dt>
-          <dd>
-            {formatDateTime(report.receivedAt)}
-            <span className="detail-sub"> · {formatAge(report.ageMinutes)} ago</span>
-          </dd>
+          <dd>{formatDateTime(report.receivedAt)}</dd>
         </div>
         <div>
-          <dt>Report source</dt>
+          <dt>Source</dt>
           <dd>{report.source}</dd>
         </div>
-        <div>
+        <div className="detail-grid-wide">
           <dt>Location confidence</dt>
           <dd>
-            <ConfidenceMeter value={report.confidence} />
+            <ConfidenceBar value={report.confidence} />
+            <span className="detail-note-text">
+              {formatPct(report.confidence)} — reference only in this demo score
+            </span>
           </dd>
         </div>
         <div className="detail-grid-wide">
           <dt>Simulated reachability</dt>
-          <dd>
-            <ReachBadge reachability={report.reachability} />
-            <p className="detail-reach-reason">{report.reachability.reason}</p>
-            <button type="button" className="link-btn" onClick={onInspectNetwork}>
-              Inspect relay network →
-            </button>
-          </dd>
+          <dd className="detail-reach">{report.reachability.reason}</dd>
         </div>
       </dl>
 
-      <div className={`detail-priority tone-${band.tone}`}>
-        <div className="detail-priority-head">
-          <span className={`priority-chip tone-${band.tone}`}>{band.label}</span>
-          <UrgencyMeter score={report.ranked.score} showBand={false} />
+      <div className={`priority tone-${band.tone}`}>
+        <div className="priority-head">
+          <span className={`priority-band tone-${band.tone}`}>{band.label}</span>
+          <ScoreMeter score={report.ranked.score} />
         </div>
-        <p className="detail-priority-text">
-          <span className="detail-priority-label">WHY PRIORITISED</span>
-          {SEVERITY_META[report.severity].label} severity ({report.people} {report.people === 1 ? 'person' : 'people'}),{' '}
-          {formatAge(report.ageMinutes)} old
-          {report.confidence < 0.6
-            ? `, and location confidence of only ${formatPct(report.confidence)} pushing it up for verification.`
-            : `, with reliable location confidence of ${formatPct(report.confidence)}.`}{' '}
-          Strongest contributors: {topFactors.map((part) => part.label.toLowerCase()).join(' and ')}.
+        <p className="priority-why">
+          <span className="priority-label">WHY THIS PRIORITY</span>
+          {SEVERITY_META[report.severity].label} severity, {report.people} {report.people === 1 ? 'person' : 'people'} and{' '}
+          {formatAge(report.ageMinutes)} waiting. Largest contributors:{' '}
+          {contributors
+            .slice(0, 2)
+            .map((part) => `${part.label.toLowerCase()} (+${part.value.toFixed(1)})`)
+            .join(', ')}
+          .
+        </p>
+        <dl className="priority-parts">
+          {report.ranked.parts.map((part) => (
+            <div key={part.key}>
+              <dt>{part.label}</dt>
+              <dd>
+                <span className="parts-detail">{part.detail}</span>
+                <span className="parts-value">+{part.value.toFixed(1)}</span>
+              </dd>
+            </div>
+          ))}
+        </dl>
+        <p className="priority-disclaimer">
+          Demo score: severity + people + waiting time, capped at 100. Not a validated emergency triage protocol.
         </p>
       </div>
 
-      <details className="detail-breakdown">
-        <summary>Show demo score breakdown</summary>
-        <ScoreBreakdown ranked={report.ranked} />
-        <p className="detail-disclaimer">
-          Demo priority score only — not a validated emergency triage protocol. It combines severity, people count,
-          report age and low location confidence.
-        </p>
-      </details>
-
-      <div className="detail-note">
-        <span className="detail-note-label">FIELD NOTE</span>
-        <p>{report.note}</p>
-      </div>
+      <p className="detail-field-note">
+        <span>FIELD NOTE</span>
+        {report.note}
+      </p>
 
       {report.status === 'assigned' && (
         <p className="detail-assigned">
-          Assigned to <strong>{assignedTeam ? `${assignedTeam.name} (${assignedTeam.id})` : report.assignedTeam}</strong>
-          {report.assignedAt ? ` at ${formatDateTime(report.assignedAt)}` : ''}. Team is marked en route.
+          Assigned to <strong>{assignedTeam ? `${assignedTeam.name} (${assignedTeam.id})` : report.assignedTeam}</strong>.
+          Team marked en route.
         </p>
       )}
 
-      <div className="detail-actions">
-        <button type="button" className="btn btn--ghost btn--sm" onClick={onClear}>
-          Clear selection
-        </button>
-        <span className="detail-age-inline">
-          Age <AgeValue minutes={report.ageMinutes} /> · updates live
-        </span>
-      </div>
+      <button type="button" className="btn btn--quiet btn--sm" onClick={onClear}>
+        CLEAR SELECTION
+      </button>
     </Panel>
   );
 }

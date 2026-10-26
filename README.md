@@ -1,18 +1,16 @@
-# RESCUELINK // AEGIS
+# RESCUELINK // AEGIS — Kaiva Basin relay simulation console
 
-An emergency response coordination console prototype for the fictional **Monsoon Flood Response** exercise in
-Sector V-7 (Kaiva Basin).
+A front-end prototype of a **tactical response map** for a fictional monsoon-flood exercise in the Kaiva Basin
+(Sector V-7). Three simulated relay drones fly pre-planned routes over a flooded basin; as they move, simulated
+coverage grows, relay links appear, and help reports flip from **UNREACHABLE** to **REACHABLE**. The operator
+prioritises reports, reviews a suggested team, and dispatches under human control.
 
-> **SIMULATION / NOT CONNECTED TO LIVE SYSTEMS.**
-> This is a front-end prototype. It does **not** provide phone, cellular, satellite, drone, radio or emergency-service
-> connectivity; it does not control aircraft; and it does not prove or predict real coverage. All incidents, teams,
-> places, people counts and timings are invented for demonstration. The priority score is a demo heuristic, not a
-> validated emergency triage protocol.
-
-The console walks one workflow end to end:
-
-**Communications outage → simulated relay coverage → prioritised help report → recommended response team →
-human-approved dispatch → logged action.**
+> ### SIMULATED COVERAGE — NOT RADIO PERFORMANCE
+> This is a demo interface running on invented data. It does **not** model, predict or prove real radio,
+> cellular, satellite, drone, phone or emergency-service coverage. It does not control any aircraft. No live
+> system, backend, account, API key or AI service is involved — everything is computed in the browser from a
+> hand-authored scenario, and the "priority score" is a demo heuristic, **not** a validated emergency triage
+> protocol. All places, agencies, call signs, people counts and timings are fictional.
 
 ---
 
@@ -20,128 +18,122 @@ human-approved dispatch → logged action.**
 
 ```bash
 npm install
-npm run dev
+npm run dev      # http://localhost:5173
 ```
-
-Open the printed local URL (Vite defaults to `http://localhost:5173`). No sign-in, backend, API key or network access
-is required — all state lives in the browser.
 
 ```bash
-npm run build     # production bundle in dist/
-npm run preview   # serve the production bundle
+npm run build    # production bundle in dist/
+npm run preview  # serve the built bundle
 ```
 
-Requires Node 18+. Tested with Node 22 and Vite 8.
+Node 18+ (tested on Node 22, Vite 8). No sign-in, no backend, no network calls at runtime.
 
 ---
 
-## Demo flow (about two minutes)
+## The screen
 
-1. **Land on Live Operations.** The scenario opens in a blackout: normal network unavailable, relay mesh off. The
-   indicators show `0/8` reports reachable and the map overlays read `MESH OFF`. The critical report
-   **RL-0423 · Greyfall Transit Shed** is preselected, and the recommendation panel explains that
-   **Heavy 3 (VOLT-03)** is the nearest available team with capacity for 21 people.
-2. **Turn the simulated relay mesh on** in *Network controls*. Three powered nodes link to the gateway, coverage rings
-   and relay links appear, and reachability jumps to `5/8`. A status explanation and a log entry record the change.
-   The critical Greyfall report is still unreachable — it sits outside every powered node's radius.
-3. **Open Relay Network → restore node AEGIS-04 Ridge** (it starts on standby). The critical report becomes reachable (AEGIS-04 Ridge · 1 hop),
-   the map updates and the event log records the node change. Try setting the gateway to *Unavailable* to watch
-   reachability collapse back to `0/8`.
-4. **Select reports.** Click a map marker or a queue row — both update the same detail panel: ID, severity, people,
-   received time, location confidence, source, simulated reachability, priority reasoning and score breakdown.
-5. **Approve a dispatch** in *Recommended response*. The report becomes **Assigned**, the team becomes **En Route**,
-   the map marker and queue update, and a timestamped `DISPATCH` entry appears immediately in the event log. If the selected report has no simulated path, the panel says so before you approve.
-6. **Try the edges.** Select a report nobody can handle (dispatch a big team first, or file a 30-person report) to see
-   the explicit *No eligible team* explanation with a disabled dispatch button. Use **Reset Scenario** to restore the
-   exact starting picture, and **New Report** to inject your own fictional report.
-
----
-
-## What works
-
-| Area | Behaviour |
+| Region | What it does |
 | --- | --- |
-| Navigation rail | Live Operations, Reports, Response Teams, Relay Network, Event Log — active section marked; collapses to icon + short label, then to a horizontal bar on phones |
-| Command header | Exercise name, sector, schematic grid note, live local clock, incident status derived from network state, persistent simulation warning, **Reset Scenario** and **New Report** |
-| Indicators | Open reports, critical reports, reachable reports, available teams, active relay nodes — all computed from state every tick |
-| Map | Schematic SVG (no tiles, works offline): fictional flood extent, spill channel, report markers (severity shape + colour + label), team positions and statuses, simulated relay nodes, gateway, coverage rings, mesh links, selected-report reticle, legend, grid references, scale and orientation marks |
-| Network controls | Normal network Available/Unavailable, simulated relay mesh On/Off, gateway Connected/Unavailable. Each change recalculates reachability, redraws the map, updates counts and writes an explainable status note plus a log entry |
-| Selected report | Same panel from map or queue: ID, severity, people, received time and age, location confidence, source, simulated reachability with the reason (node, distance, hop count, or why there is no path), priority explanation and expandable score breakdown |
-| Recommended response | Nearest eligible available team with sufficient capacity, with a written justification, alternatives expander, rejected-team reasons, and a disabled state when nothing qualifies |
-| Dispatch | Operator-approved only: report → **Assigned**, team → **En Route**, timestamped log entry, dispatch panel switches to a recorded state |
-| Priority queue | Deterministic score ordering with rank, ID, location, severity, people, age, urgency meter, status and a reachability dot; assigned reports stay visible below the open queue |
-| Event log | Seeded history plus live entries for network changes, node power changes, new reports and dispatches; filterable by kind; newest first; scrollable panel and full-page view |
-| Reports page | Severity and status filters that work, full queue, same detail/recommendation panels, and a source/confidence audit grid |
-| Teams page | Team posture cards with capacity, distance to the selected report, eligibility verdicts and the tasking rules, plus a link from an assigned team to its report |
-| Relay page | Gateway status, node table with simulated power controls (`Take standby` / `Restore node`), hop counts, per-node covered-report counts and a per-report reachability audit |
-| Accessibility | Keyboard-operable markers and rows, visible focus rings, skip link, focus trap and Escape handling in the report dialog, ARIA labels that restate marker contents, labelled colour usage (colour is never the only signal), status regions, reduced-motion support |
-| Responsive | 4-column desktop console → 2-column → single column; the schematic gains horizontal pan on narrow screens rather than shrinking labels into illegibility |
+| **Top bar** | Live counts — open reports, critical reports, simulated reachable reports, teams free, relays up/down — plus the simulated clock (`T+04:12`) and the transport controls. |
+| **Map** | The tactical map: flood extent, river path, reports, teams, the AEGIS gateway, relay drones with coverage rings and trails, and dashed relay links between connected nodes. The banner across the map reads `SIMULATED COVERAGE — NOT RADIO PERFORMANCE` at all times. |
+| **Left rail** | Sections: Live Operations, Reports, Response Teams, Relay Network, Event Log. |
+| **Right rail** | Section context — selected report detail with score breakdown, the team recommendation, network toggles, the activity log, and the drone roster (call sign, task, link state, battery). |
+| **Priority queue** | Bottom strip, sorted by demo priority score. Click a card to select that report on the map. |
+| **Transport bar** | `START / PAUSE`, `STEP +1 MIN`, `RESET`, speed `0.5× 1× 2× 4×`, the simulated clock and a flight-plan progress track. |
+
+### Controls
+
+- **START / PAUSE** — run or hold the simulated clock. Drones move, batteries drain, report ages grow and
+  reachability is re-evaluated every frame.
+- **STEP +1 MIN** — advance the simulation by exactly 60 simulated seconds in one jump (works while paused).
+  Under `prefers-reduced-motion` this is the *only* way time advances.
+- **RESET** — restores the whole scenario: reports, statuses, team tasking, drone positions, routes, battery,
+  network toggles and the event log return to `T+00:00`.
+- **Speed** — `0.5× / 1× / 2× / 4×` clock multiplier (motion stays smooth; only the clock changes).
+- **Map** — click a report marker, team marker or drone to select it; `Enter`/`Space` on a focused marker does the
+  same. Escape or `CLEAR SELECTION` deselects.
+- **Network controls** — toggle `MESH`, `GATEWAY` and `NET OUT` (normal network) in Relay Network and watch the
+  relay graph and reachability recompute. Turning the gateway to `UNAVAILABLE` collapses every relay path.
+- **New report** — `+ REPORT` opens a dialog; a new report enters the queue and is scored like any other.
 
 ---
 
-## How the simulation decides things
+## Seven-step demo
 
-All logic is pure and lives in [`src/lib/simulation.js`](src/lib/simulation.js), separate from the components.
+1. **Open on Live Operations.** The clock reads `T+00:00`. `REACHABLE 0/8`, `RELAYS UP 0/5`. Every report on the
+   map is marked `NO LINK`, and the event log shows the simulated network outage. Note the drones: HERON 1 routes
+   west, HERON 2 climbs north, HERON 3 works the Tessel chain — and HERON 4 sits parked and `OFFLINE` with a flat
+   battery while HERON 5 is parked on the staging pad in `STANDBY`. Parked drones never move.
+2. **Press START (or 4× then START).** The drones advance along their planned routes, each with a heading marker
+   and a fading trail; planned routes and waypoints are drawn as thin dashed lines. Batteries fall, HERON 1 starts
+   climbing toward staging.
+3. **Watch link lines appear.** As HERON 1 and HERON 2 enter gateway range and then each other's range, dashed
+   relay links appear between nodes and `RELAYS UP` climbs. Report markers that fall inside a drone's simulated
+   coverage ring switch to `REACHABLE · RELAY — HERON n`, and a `REACHABILITY — RL-xxxx now reachable via HERON n`
+   line is written to the event log. Coverage that arrives *after* a report was filed is the point of the exercise.
+4. **Select a reachable critical report** (for example **RL-0423 Greyfall Transit Shed**) from the map or the
+   priority queue. The inspector shows people, waiting time, simulated location confidence, the coverage ring that
+   carries it, and a transparent score breakdown (severity, people, waiting time) with a note that the score is a
+   demo heuristic.
+5. **Read the recommendation.** The inspector suggests the closest *eligible* team — distance, capacity, role and
+   status are shown — and explains why other teams were passed over. Nothing is dispatched automatically.
+6. **Dispatch with the human control.** Press `DISPATCH`. The report becomes `ASSIGNED`, the team becomes
+   `EN ROUTE`, the map shows the team tasking, and the event log records
+   `DISPATCH — VOLT-01 … tasked to RL-0417 … operator approved.` The dispatch only happens because you pressed it.
+7. **Break the mesh, then reset.** Turn `GATEWAY` to `UNAVAILABLE` (or `MESH` off) in Relay Network: relay links
+   drop to zero, `REACHABLE` falls back to `0/8`, reports return to `NO LINK`. Then press **RESET** — positions,
+   clock, statuses and log all return to the opening state, ready to run again.
 
-**Demo priority score (0–100).** `severity + people + age + low confidence`, capped at 100:
-
-| Factor | Points |
-| --- | --- |
-| Severity | critical 46 · high 30 · moderate 16 · low 7 |
-| People | `min(people, 24) × 1.6` |
-| Report age | `min(age in minutes, 90) × 0.22` |
-| Low location confidence | confidence below 60% adds `(0.6 − confidence) × 40` |
-
-Ties break deterministically by severity, then people, then report ID. Open reports always rank above assigned ones.
-This is a demonstration heuristic for explaining ordering — **not** a validated triage protocol.
-
-**Simulated reachability.** A report is reachable when:
-
-1. the normal network is marked available (direct path), **or**
-2. the relay mesh is on, the gateway is connected, and the report lies inside the radius of a **powered** node that has
-   a mesh path to the gateway. Nodes reach the gateway directly when within gateway range, otherwise by chaining through
-   other powered nodes within link range (hop count is shown).
-
-Distances are plain map units in a 1000 × 700 schematic. Coverage rings are geometric illustrations only.
-
-**Team recommendation.** Candidates must be `available` and have capacity ≥ the report's people count. The nearest
-candidate wins (distance in map units); capacity then team ID break ties. Everything else is listed with a reason.
-The simulator never dispatches — the operator presses the button.
+Reduced-motion users get the same sequence: with `prefers-reduced-motion: reduce`, the banner reads
+`REDUCED MOTION ON · drones advance only when you press STEP`, the sweep and decorative animation stop, and each
+`STEP +1 MIN` advances drones one minute along their routes (reachability updates immediately).
 
 ---
 
-## Project structure
+## How the simulation works
+
+All of it is deterministic — the same clock value always produces the same frame.
+
+- **Motion** (`src/lib/simulation.js`): each active drone owns a route of `{ to, task }` waypoints and a speed in
+  map units per simulated second. `droneStateAt()` walks the legs by elapsed time, so a drone is always at an
+  exact, reproducible point, reports its current task, and holds at its final waypoint while charging at staging.
+  Trails are sampled backwards along the same route — they are path history, not random drift. Offline, standby
+  and recovered drones have empty routes and never move.
+- **Relay graph**: a drone relays when it is active, the mesh is on, and it is inside gateway range or chained
+  through another connected drone. Coverage is a fixed radius per drone and each report is "reachable" when it
+  falls inside a connected drone's ring; the shortest hop distance is reported in the inspector.
+- **Reports and ages**: report ages advance with the clock, so the queue order changes over time as waiting time
+  accrues.
+- **Priority score**: `severity + people + waiting time`, capped at 100, with each component shown in the
+  inspector. It is a demo ranking heuristic only.
+- **Team recommendation**: filters to teams that are free, close enough and role-appropriate, then picks the
+  nearest; the reason string explains the choice and the exclusions.
+- **Dispatch** is a separate, explicit operator action — every action goes through the state hook and is logged
+  with a simulated timestamp (`T-…` for events that pre-date the exercise).
+
+### Files
 
 ```
-index.html
-vite.config.js
 src/
-  main.jsx                    entry point + bundled fonts
-  App.jsx                     shell, section routing, dialog, live region
-  styles.css                  console styling, responsive rules, reduced motion
-  data/scenario.js            fictional reports, teams, relay nodes, gateway, geography
-  lib/simulation.js           scoring, reachability, relay graph, recommendation (pure)
-  lib/format.js               time/age/percentage formatting
-  state/useRescueLink.js      state, actions, event log, network/node controls
-  components/                 rail, header, indicators, map, legend, controls,
-                              detail, queue, recommendation, event log, dialog, ui primitives
-  views/                      Ops, Reports, Teams, Relay, Log
+  data/scenario.js        invented scenario data: reports, teams, drones + routes, events, flood geometry
+  lib/simulation.js       pure logic: motion, trails, battery, relay graph, reachability, scoring, recommendation
+  state/useRescueLink.js  simulation clock (rAF), state reducer, actions, logging
+  components/             map, rails, transport bar, queue strip, dialogs, small UI primitives
+  styles.css              console styling (no CSS framework)
 ```
 
-No backend, no external AI, no API keys, no map tile provider, no persistence. Reloading re-seeds the exercise.
+Data, logic and view are kept apart: `scenario.js` holds only numbers and strings, `simulation.js` is pure
+functions of that data plus the clock, and components only render what the state hook exposes.
 
 ---
 
-## Simulation limitations
+## Notes
 
-- Not an emergency system. Do not use it to make real safety decisions.
-- No real connectivity of any kind: no telephony, SMS, cellular, satellite, radio, mesh networking or drone links.
-  "Reports" and "relay" statuses are UI state only.
-- No aircraft control, flight planning, telemetry or geofencing. Nodes and the gateway are points on a drawing.
-- Coverage rings are distance circles over an invented coordinate space. They are not radio propagation models and
-  say nothing about real-world coverage, terrain, weather or capacity.
-- Positions, distances, travel times, team capacities, locations and severity are fictional and not geospatially valid.
-- The priority score is a demo formula with arbitrary weights; it is not clinically or operationally validated.
-- Nothing is stored beyond the current browser session, and no data is transmitted anywhere.
-
-Built as a front-end prototype for the SIH 2026 problem statement; all data is fabricated for demonstration.
+- **Visual language**: flat dark tactical map, hairline rules, mono numerals, no rounded dashboard cards,
+  gradients, glassmorphism or decorative holograms.
+- **Motion** is limited to purposeful movement (drone travel, trail fade, link draw-in) and is disabled under
+  `prefers-reduced-motion`.
+- **Responsive**: layout reflows down to phone width; the right rail becomes a collapsible inspector and map
+  labels shed secondary text on narrow screens.
+- **Accessibility**: all controls are real buttons with `aria-pressed` / `aria-expanded` state, map markers are
+  keyboard-focusable, and selection works with `Enter` and `Space`.

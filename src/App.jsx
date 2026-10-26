@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import NavigationRail from './components/NavigationRail.jsx';
-import CommandHeader from './components/CommandHeader.jsx';
+import TopBar from './components/TopBar.jsx';
+import MapView from './components/MapView.jsx';
+import MapLegend from './components/MapLegend.jsx';
+import QueueStrip from './components/QueueStrip.jsx';
+import TransportBar from './components/TransportBar.jsx';
+import RightRail from './components/RightRail.jsx';
 import NewReportDialog from './components/NewReportDialog.jsx';
-import ConfirmDialog from './components/ConfirmDialog.jsx';
-import OpsView from './views/OpsView.jsx';
-import ReportsView from './views/ReportsView.jsx';
-import TeamsView from './views/TeamsView.jsx';
-import RelayView from './views/RelayView.jsx';
-import LogView from './views/LogView.jsx';
 import { useRescueLink } from './state/useRescueLink.js';
 
 const SECTION_LABEL = {
@@ -22,73 +21,113 @@ export default function App() {
   const app = useRescueLink();
   const [section, setSection] = useState('ops');
   const [dialogOpen, setDialogOpen] = useState(false);
-  const [resetOpen, setResetOpen] = useState(false);
-  const mainRef = useRef(null);
+  const [reducedMotion, setReducedMotion] = useState(false);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const railRef = useRef(null);
 
   useEffect(() => {
-    mainRef.current?.scrollTo?.({ top: 0, behavior: 'auto' });
-    window.scrollTo({ top: 0, behavior: 'auto' });
-  }, [section]);
+    const query = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const apply = () => setReducedMotion(query.matches);
+    apply();
+    query.addEventListener('change', apply);
+    return () => query.removeEventListener('change', apply);
+  }, []);
+
+  useEffect(() => {
+    if (reducedMotion && app.running) app.actions.pause();
+  }, [reducedMotion, app.running, app.actions]);
+
+  const droneStates = app.droneStates.map((drone) => ({
+    ...drone,
+    connected: app.graph.hops[drone.id] != null,
+  }));
+
+  const selectOnMap = (id) => {
+    app.actions.selectReport(id);
+    setInspectorOpen(true);
+    if (window.matchMedia('(max-width: 1080px)').matches) {
+      requestAnimationFrame(() => {
+        document.querySelector('.rightrail')?.scrollIntoView({ block: 'start', behavior: 'instant' });
+      });
+    }
+  };
 
   return (
     <div className="app">
-      <a className="skip-link" href="#main-content">
-        Skip to console content
+      <a className="skip-link" href="#map-stage">
+        Skip to response map
       </a>
 
-      <NavigationRail active={section} onChange={setSection} summary={app.summary} />
+      <NavigationRail active={section} onChange={setSection} queueCount={app.summary.open} />
 
-      <div className="app-main">
-        <CommandHeader
-          now={app.now}
+      <div className="console">
+        <TopBar
+          summary={app.summary}
           status={app.status}
+          simTime={app.simTime}
+          running={app.running}
           sectionLabel={SECTION_LABEL[section]}
-          onReset={() => setResetOpen(true)}
           onNewReport={() => setDialogOpen(true)}
+          onReset={app.actions.reset}
         />
 
-        <main id="main-content" className="app-content" ref={mainRef} tabIndex={-1}>
-          {section === 'ops' && (
-            <OpsView app={app} onOpenReportDialog={() => setDialogOpen(true)} onSection={setSection} />
-          )}
-          {section === 'reports' && (
-            <ReportsView app={app} onOpenReportDialog={() => setDialogOpen(true)} onSection={setSection} />
-          )}
-          {section === 'teams' && <TeamsView app={app} onSection={setSection} />}
-          {section === 'relay' && <RelayView app={app} onSection={setSection} />}
-          {section === 'log' && <LogView app={app} onSection={setSection} />}
-        </main>
+        <div className="stage" id="map-stage">
+          <div className={`map-wrap${inspectorOpen ? ' is-inspecting' : ''}`}>
+            <MapView
+              reports={app.reports}
+              teams={app.teams}
+              droneStates={droneStates}
+              gateway={app.gateway}
+              network={app.network}
+              graph={app.graph}
+              selectedId={app.selectedId}
+              onSelect={selectOnMap}
+              onClear={app.actions.clearSelection}
+              reducedMotion={reducedMotion}
+            />
+            <MapLegend />
+          </div>
 
-        <footer className="app-footer">
-          <span>RESCUELINK // AEGIS · EX-2261 · fictional exercise console</span>
-          <span>
-            Software simulation only — no phone, cellular, satellite, drone, or emergency-service connectivity. Not a
-            validated triage protocol.
-          </span>
-        </footer>
+          <RightRail
+            section={section}
+            app={{ ...app, droneStates, actions: { ...app.actions, selectReport: selectOnMap } }}
+            onOpenLog={() => setSection('log')}
+            open={inspectorOpen}
+            onToggle={() => setInspectorOpen((value) => !value)}
+          />
+        </div>
+
+        <QueueStrip
+          queue={app.queue}
+          selectedId={app.selectedId}
+          onSelect={selectOnMap}
+        />
+
+        <TransportBar
+          running={app.running}
+          paused={app.started && !app.running}
+          simTime={app.simTime}
+          speed={app.speed}
+          reducedMotion={reducedMotion}
+          note={app.note}
+          onStart={app.actions.start}
+          onPause={app.actions.pause}
+          onStep={() => app.actions.step(60)}
+          onReset={app.actions.reset}
+          onSpeed={app.actions.setSpeed}
+          drones={app.droneStates}
+        />
       </div>
-
-      <ConfirmDialog
-        open={resetOpen}
-        kicker="SCENARIO CONTROL"
-        title="Reset this exercise?"
-        body="The console returns to the starting blackout picture: seeded reports and teams restored, relay mesh off, gateway connected, assigned reports reopened, and your filed reports removed. The reset itself is added to the event log."
-        confirmLabel="Reset scenario"
-        onConfirm={() => {
-          app.reset();
-          setResetOpen(false);
-        }}
-        onClose={() => setResetOpen(false)}
-      />
 
       <NewReportDialog
         open={dialogOpen}
         onClose={() => setDialogOpen(false)}
-        onSubmit={(payload) => app.fileReport(payload)}
+        onSubmit={(payload) => app.actions.fileReport(payload)}
       />
 
       <div className="sr-only" role="status" aria-live="polite">
-        {app.status.label}. {app.summary.reachable} of {app.summary.open} open reports reachable in the simulation.
+        {app.status.label}. {app.summary.reachable} of {app.summary.open} open reports reachable;{' '}
+        {app.graph.connectedCount} relay drones linked to the simulated gateway.
       </div>
     </div>
   );

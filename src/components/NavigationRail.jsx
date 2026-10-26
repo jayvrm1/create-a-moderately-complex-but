@@ -1,103 +1,90 @@
-import { SimulationStamp } from './ui.jsx';
-
 const SECTIONS = [
-  { id: 'ops', label: 'Live Operations', short: 'OPS', icon: 'radar' },
+  { id: 'ops', label: 'Live Operations', short: 'OPS', icon: 'target' },
   { id: 'reports', label: 'Reports', short: 'RPT', icon: 'list' },
   { id: 'teams', label: 'Response Teams', short: 'TEAM', icon: 'crest' },
-  { id: 'relay', label: 'Relay Network', short: 'NET', icon: 'mesh' },
+  { id: 'relay', label: 'Relay Network', short: 'RELAY', icon: 'mesh' },
   { id: 'log', label: 'Event Log', short: 'LOG', icon: 'log' },
 ];
 
-function NavIcon({ name }) {
+function Icon({ name }) {
   return (
-    <svg className="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-      {name === 'radar' && (
+    <svg className="rail-icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      {name === 'target' && (
         <>
-          <circle cx="12" cy="12" r="9" />
-          <circle cx="12" cy="12" r="4.4" />
-          <path d="M12 12 19 6.4" />
-          <circle cx="12" cy="12" r="1.2" className="nav-icon-fill" />
+          <circle cx="10" cy="10" r="7.4" />
+          <circle cx="10" cy="10" r="3.2" />
+          <path d="M10 10 16 4.4" />
+          <circle cx="10" cy="10" r="0.9" className="rail-icon-fill" />
         </>
       )}
       {name === 'list' && (
         <>
-          <path d="M4 6h16M4 12h16M4 18h10" />
-          <circle cx="20" cy="18" r="1.4" className="nav-icon-fill" />
+          <path d="M3 5h14M3 10h14M3 15h9" />
+          <circle cx="16.6" cy="15" r="1.2" className="rail-icon-fill" />
         </>
       )}
       {name === 'crest' && (
         <>
-          <path d="M12 3 20 8v7.5L12 21 4 15.5V8Z" />
-          <path d="M12 8.2 15.6 12 12 15.8 8.4 12Z" />
+          <path d="M10 2.4 17 6.6v6.8L10 17.6 3 13.4V6.6Z" />
+          <path d="M10 6.6 13.4 10 10 13.4 6.6 10Z" />
         </>
       )}
       {name === 'mesh' && (
         <>
-          <path d="M12 3.6 19.2 8v8L12 20.4 4.8 16V8Z" />
-          <path d="M12 3.6V12m0 0 7.2-4m-7.2 4L4.8 8" />
-          <circle cx="12" cy="12" r="1.3" className="nav-icon-fill" />
+          <path d="M10 2.6 16.4 6.3v7.4L10 17.4 3.6 13.7V6.3Z" />
+          <path d="M10 2.6v7.4m0 0 6.4-3.7M10 10 3.6 6.3" />
+          <circle cx="10" cy="10" r="1.1" className="rail-icon-fill" />
         </>
       )}
       {name === 'log' && (
         <>
-          <path d="M5 4h14v16H5z" />
-          <path d="M8.5 9h7M8.5 13h7M8.5 17h4" />
+          <path d="M4 3h12v14H4z" />
+          <path d="M7 7h6M7 10.4h6M7 13.8h3.6" />
         </>
       )}
     </svg>
   );
 }
 
-export default function NavigationRail({ active, onChange, summary }) {
+export default function NavigationRail({ active, onChange, queueCount }) {
   return (
-    <nav className="rail" aria-label="Primary">
-      <div className="rail-emblem">
-        <svg viewBox="0 0 48 48" width="38" height="38" role="img" aria-label="RescueLink emblem">
-          <circle cx="24" cy="24" r="20" className="emblem-orbit" />
-          <circle cx="24" cy="24" r="15" className="emblem-ring" />
-          <path d="M24 7 38.5 32H9.5Z" className="emblem-tri" />
-          <path d="M24 19.5 30.4 30.5H17.6Z" className="emblem-core" />
-          <circle cx="24" cy="24" r="2.2" className="emblem-dot" />
-          <circle cx="43" cy="16" r="1.7" className="emblem-sat" />
+    <nav className="rail" aria-label="Console sections">
+      <div className="rail-mark" title="RescueLink // Aegis">
+        <svg viewBox="0 0 32 32" width="26" height="26" role="img" aria-label="RescueLink emblem">
+          <circle cx="16" cy="16" r="13.4" className="mark-orbit" />
+          <path d="M16 5 26.4 23H5.6Z" className="mark-tri" />
+          <path d="M16 13.2 20.2 21h-8.4Z" className="mark-core" />
+          <circle cx="16" cy="16" r="1.5" className="mark-dot" />
         </svg>
-        <span className="rail-emblem-text">
-          <strong>RESCUELINK</strong>
-          <span>// AEGIS</span>
-        </span>
+        <span className="rail-wordmark">RESCUELINK</span>
       </div>
 
-      <ul className="rail-links">
-        {SECTIONS.map((section, index) => (
+      <ul className="rail-list">
+        {SECTIONS.map((section) => (
           <li key={section.id}>
             <button
               type="button"
-              className={`rail-link${active === section.id ? ' is-active' : ''}`}
+              className={`rail-btn${active === section.id ? ' is-active' : ''}`}
               aria-current={active === section.id ? 'page' : undefined}
               onClick={() => onChange(section.id)}
+              title={section.label}
             >
-              <span className="rail-index">{String(index + 1).padStart(2, '0')}</span>
-              <NavIcon name={section.icon} />
-              <span className="rail-label">
-                <span className="rail-label-full">{section.label}</span>
-                <span className="rail-label-short">{section.short}</span>
-              </span>
-              <span className="rail-link-status" aria-hidden="true" />
+              <Icon name={section.icon} />
+              <span className="rail-btn-label">{section.short}</span>
+              <span className="rail-btn-name">{section.label}</span>
+              {section.id === 'reports' && queueCount > 0 && (
+                <span className="rail-badge" aria-label={`${queueCount} open reports`}>
+                  {queueCount}
+                </span>
+              )}
             </button>
           </li>
         ))}
       </ul>
 
       <div className="rail-foot">
-        <div className="rail-vitals">
-          <span className="rail-vital-label">OPEN</span>
-          <span className="rail-vital-value">{String(summary.open).padStart(2, '0')}</span>
-          <span className="rail-vital-label">REACH</span>
-          <span className="rail-vital-value rail-vital-value--accent">
-            {summary.reachable}/{summary.open}
-          </span>
-        </div>
-        <SimulationStamp variant="rail" />
-        <span className="rail-build">AEGIS · BUILD 0.9 · EX-2261</span>
+        <span className="rail-foot-mark" aria-hidden="true">EX-2261</span>
+        <span className="rail-foot-sim">SIM</span>
       </div>
     </nav>
   );

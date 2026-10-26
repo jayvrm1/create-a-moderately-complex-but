@@ -1,103 +1,133 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   DEFAULT_NETWORK,
+  DRONES,
   GATEWAY,
-  RELAY_NODES,
+  SEED_EVENTS,
   SEED_REPORTS,
   TEAMS,
 } from '../data/scenario.js';
 import {
-  buildPriorityQueue,
+  buildRelayGraph,
   commsStatus,
-  computeReachability,
-  computeRelayGraph,
+  droneBattery,
+  droneStateAt,
+  droneTrail,
   recommendTeam,
+  reportReachability,
   scoreReport,
+  sortQueue,
 } from '../lib/simulation.js';
-
-const SEED_LOG = [
-  { offsetMin: 58, kind: 'system', text: 'Exercise EX-2261 opened. Sector V-7 moved to active response.' },
-  { offsetMin: 51, kind: 'network', text: 'Normal network reported unavailable across the Kaiva Basin.' },
-  { offsetMin: 47, kind: 'report', text: 'RL-0402 received via field radio handoff — 3 people at Kaiva East Culvert.' },
-  { offsetMin: 41, kind: 'report', text: 'RL-0419 received via relayed voice report — 14 people at Tessel Primary Shelter.' },
-  { offsetMin: 33, kind: 'report', text: 'RL-0423 received via cached SMS relay — 21 people at Greyfall Transit Shed.' },
-  { offsetMin: 21, kind: 'team', text: 'VOLT-02 tasked to RL-0402. Now marked en route.' },
-  { offsetMin: 9, kind: 'network', text: 'Simulated relay mesh placed on standby. Gateway remains connected.' },
-];
 
 let eventSeq = 0;
 const nextEventId = () => `EV-${(++eventSeq).toString().padStart(4, '0')}`;
 
-function seedEvents(start) {
-  return SEED_LOG.map((entry) => ({
-    ...entry,
-    id: nextEventId(),
-    at: start - entry.offsetMin * 60000,
-    tone: entry.kind === 'network' ? 'warn' : 'neutral',
+const SCENARIO_START = Date.now();
+
+function seedEvents() {
+  return SEED_EVENTS.map((event, index) => ({
+    ...event,
+    id: `EV-S${index + 1}`,
+    live: false,
   })).reverse();
 }
 
 function createState() {
-  const start = Date.now();
   return {
-    start,
+    simTime: 0,
+    running: false,
+    speed: 1,
+    started: false,
     network: { ...DEFAULT_NETWORK },
-    nodes: RELAY_NODES.map((node) => ({ ...node })),
-    reports: SEED_REPORTS.map(({ offsetMin, ...report }) => ({
+    reports: SEED_REPORTS.map((report) => ({
       ...report,
-      receivedAt: start - offsetMin * 60000,
+      seedAgeMinutes: report.seedAgeMin,
     })),
     teams: TEAMS.map((team) => ({ ...team })),
-    events: seedEvents(start),
+    drones: DRONES.map((drone) => ({ ...drone })),
+    events: seedEvents(),
     selectedId: 'RL-0423',
-    networkNote: {
-      tone: 'warn',
-      title: 'Scenario loaded — communications blackout',
-      text: 'Normal network unavailable, relay mesh off. The gateway is powered but has nothing to relay. Reports are held locally until a simulated path exists.',
-    },
     reportSeq: 425,
+    note: {
+      tone: 'warn',
+      title: 'READY — simulation paused at T+00:00',
+      text: 'Normal network unavailable, relay mesh on. Three drones are at launch positions outside useful coverage: 0 of 8 open reports reachable. Press START to fly the routes.',
+    },
   };
-}
-
-function countReachable(reports, network, graph, nodes) {
-  return reports.filter(
-    (report) => report.status === 'open' && computeReachability(report, network, graph, nodes).reachable,
-  ).length;
 }
 
 export function useRescueLink() {
   const [state, setState] = useState(createState);
-  const [now, setNow] = useState(() => Date.now());
   const stateRef = useRef(state);
   stateRef.current = state;
+  const reachRef = useRef(new Map());
+  const rafRef = useRef(0);
 
+  /* ---------------- simulation clock ---------------- */
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, []);
+    if (!state.running) return undefined;
+    let last = performance.now();
+    let frame = 0;
+
+    const tick = (now) => {
+      const deltaMs = Math.min(now - last, 120);
+      last = now;
+      const advance = (deltaMs / 1000) * stateRef.current.speed;
+      setState((prev) => (prev.running ? { ...prev, simTime: prev.simTime + advance } : prev));
+      frame = requestAnimationFrame(tick);
+    };
+
+    frame = requestAnimationFrame(tick);
+    rafRef.current = frame;
+    return () => cancelAnimationFrame(frame);
+  }, [state.running, state.speed]);
+
+  /* ---------------- derived drone + network state ---------------- */
+  const droneStates = useMemo(
+    () =>
+      state.drones.map((drone) => {
+        const motion = droneStateAt(drone, state.simTime);
+        const battery = droneBattery(drone, state.simTime);
+        return {
+          ...drone,
+          ...motion,
+          battery: battery.level,
+          charging: battery.charging,
+          trail: droneTrail(drone, state.simTime),
+        };
+      }),
+    [state.drones, state.simTime],
+  );
 
   const graph = useMemo(
-    () => computeRelayGraph(state.network, state.nodes, GATEWAY),
-    [state.network, state.nodes],
+    () => buildRelayGraph({ network: state.network, droneStates, drones: state.drones, gateway: GATEWAY }),
+    [state.network, droneStates, state.drones],
   );
 
   const reports = useMemo(
     () =>
-      state.reports.map((report) => ({
-        ...report,
-        ageMinutes: Math.max(0, (now - report.receivedAt) / 60000),
-        reachability: computeReachability(report, state.network, graph, state.nodes),
-        ranked: scoreReport(report, now),
-      })),
-    [state.reports, state.network, graph, state.nodes, now],
+      state.reports.map((report) => {
+        const ageMinutes = report.seedAgeMinutes + state.simTime / 60;
+        return {
+          ...report,
+          ageMinutes,
+          receivedAt: SCENARIO_START - report.seedAgeMinutes * 60000,
+          reachability: reportReachability(report, state.network, graph, droneStates),
+          ranked: scoreReport(report, ageMinutes),
+        };
+      }),
+    [state.reports, state.simTime, state.network, graph, droneStates],
+  );
+
+  const queue = useMemo(
+    () => sortQueue(reports.map((report) => ({ report, ranked: report.ranked }))),
+    [reports],
   );
 
   const selected = useMemo(
     () => reports.find((report) => report.id === state.selectedId) ?? null,
     [reports, state.selectedId],
   );
-
-  const queue = useMemo(() => buildPriorityQueue(reports, now), [reports, now]);
 
   const recommendation = useMemo(
     () => (selected ? recommendTeam(selected, state.teams) : null),
@@ -115,19 +145,160 @@ export function useRescueLink() {
       ).length,
       teamsAvailable: state.teams.filter((team) => team.status === 'available').length,
       teamsTotal: state.teams.length,
-      activeNodes: state.nodes.filter((node) => node.status === 'active').length,
-      nodesTotal: state.nodes.length,
-      relayedNodes: graph.relayedNodeCount,
+      dronesActive: state.drones.filter((drone) => drone.status === 'active').length,
+      dronesTotal: state.drones.length,
+      connectedDrones: graph.connectedCount,
     };
-  }, [reports, state.teams, state.nodes, graph]);
+  }, [reports, state.teams, state.drones, graph]);
 
   const status = useMemo(() => commsStatus(state.network), [state.network]);
 
-  const pushEvent = useCallback((entry, list = stateRef.current.events) => {
+  /* ---------------- reachability change detection ---------------- */
+  useEffect(() => {
+    const next = new Map();
+    for (const report of reports) {
+      next.set(report.id, {
+        reachable: report.reachability.reachable,
+        via: report.reachability.via,
+      });
+    }
+    const prev = reachRef.current;
+    const changes = [];
+
+    if (prev.size > 0) {
+      for (const [id, value] of next) {
+        const before = prev.get(id);
+        if (!before) continue;
+        if (before.reachable !== value.reachable) {
+          const report = reports.find((item) => item.id === id);
+          const drone = droneStates.find((item) => item.id === report?.reachability.droneId);
+          changes.push({
+            tone: value.reachable ? 'ok' : 'warn',
+            text: value.reachable
+              ? `REACHABILITY — ${id} now reachable via ${value.via.replace('RELAY · ', '')}${
+                  drone ? ` (${drone.range}-unit ring)` : ''
+                } at T+${formatSimLabel(stateRef.current.simTime)}.`
+              : `REACHABILITY LOST — ${id} lost its simulated path at T+${formatSimLabel(stateRef.current.simTime)}.`,
+          });
+        }
+      }
+    }
+    reachRef.current = next;
+
+    if (changes.length) {
+      setState((prev2) => ({
+        ...prev2,
+        events: [
+          ...changes.map((change) => ({
+            id: nextEventId(),
+            atSim: prev2.simTime,
+            kind: 'reach',
+            live: true,
+            ...change,
+          })),
+          ...prev2.events,
+        ],
+      }));
+    }
+  }, [reports, droneStates]);
+
+  /* ---------------- actions ---------------- */
+  const pushEvent = useCallback((entry, events) => {
     return [
-      { id: nextEventId(), at: Date.now(), tone: 'neutral', ...entry },
-      ...list,
+      { id: nextEventId(), atSim: stateRef.current.simTime, live: true, ...entry },
+      ...events,
     ];
+  }, []);
+
+  const start = useCallback(() => {
+    setState((prev) => {
+      if (prev.running) return prev;
+      const first = !prev.started;
+      return {
+        ...prev,
+        running: true,
+        started: true,
+        note: {
+          tone: 'ok',
+          title: first ? 'SIMULATION RUNNING — T+00:00' : 'SIMULATION RESUMED',
+          text: 'Drones are following their predefined routes. Relay links and report reachability update as they move.',
+        },
+        events: first
+          ? pushEvent(
+              {
+                kind: 'system',
+                tone: 'ok',
+                text: 'Simulation started by operator. Relay drones following pre-planned routes.',
+              },
+              prev.events,
+            )
+          : prev.events,
+      };
+    });
+  }, [pushEvent]);
+
+  const pause = useCallback(() => {
+    setState((prev) => {
+      if (!prev.running) return prev;
+      return {
+        ...prev,
+        running: false,
+        note: {
+          tone: 'warn',
+          title: `SIMULATION PAUSED — T+${formatSimLabel(prev.simTime)}`,
+          text: 'Flight paths are frozen at their current positions. Press START to resume or STEP to advance one simulated minute.',
+        },
+        events: pushEvent(
+          { kind: 'system', tone: 'neutral', text: `Simulation paused at T+${formatSimLabel(prev.simTime)}.` },
+          prev.events,
+        ),
+      };
+    });
+  }, [pushEvent]);
+
+  const step = useCallback(
+    (seconds = 60) => {
+      setState((prev) => ({
+        ...prev,
+        running: false,
+        started: true,
+        simTime: prev.simTime + seconds,
+        note: {
+          tone: 'warn',
+          title: `STEPPED +${Math.round(seconds / 60)} MIN — T+${formatSimLabel(prev.simTime + seconds)}`,
+          text: 'Drones advanced one minute along their routes without continuous animation. Reachable counts update immediately.',
+        },
+      }));
+    },
+    [],
+  );
+
+  const setSpeed = useCallback((speed) => {
+    setState((prev) => ({ ...prev, speed }));
+  }, []);
+
+  const reset = useCallback(() => {
+    const fresh = createState();
+    reachRef.current = new Map();
+    setState({
+      ...fresh,
+      events: [
+        {
+          id: nextEventId(),
+          atSim: 0,
+          kind: 'system',
+          tone: 'neutral',
+          live: true,
+          text: 'SCENARIO RESET — reports, teams, drones, routes and event history restored to the starting state.',
+        },
+        ...fresh.events,
+      ],
+      note: {
+        tone: 'warn',
+        title: 'SCENARIO RESET — paused at T+00:00',
+        text: 'Starting picture restored. Routes replay identically from T+00:00 whenever you press START.',
+      },
+    });
   }, []);
 
   const selectReport = useCallback((id) => {
@@ -142,48 +313,45 @@ export function useRescueLink() {
     (key, value) => {
       setState((prev) => {
         if (prev.network[key] === value) return prev;
-        const nextNetwork = { ...prev.network, [key]: value };
-        const nextGraph = computeRelayGraph(nextNetwork, prev.nodes, GATEWAY);
-        const before = countReachable(prev.reports, prev.network, computeRelayGraph(prev.network, prev.nodes, GATEWAY), prev.nodes);
-        const after = countReachable(prev.reports, nextNetwork, nextGraph, prev.nodes);
-        const statusNext = commsStatus(nextNetwork);
-
         const labels = {
-          normal: ['normal network', { available: 'marked available', unavailable: 'marked unavailable' }],
-          mesh: ['simulated relay mesh', { on: 'engaged', off: 'switched off' }],
-          gateway: ['simulated gateway', { connected: 'connected', unavailable: 'unavailable' }],
+          normal: ['Normal network', { available: 'marked available', unavailable: 'marked unavailable' }],
+          mesh: ['Relay mesh', { on: 'engaged', off: 'switched off' }],
+          gateway: ['Gateway', { connected: 'connected', unavailable: 'unavailable' }],
         };
-        const label = labels[key][0];
-        const verb = labels[key][1][value];
-
-        let text;
-        if (key === 'normal') {
-          text =
-            value === 'available'
-              ? `Normal network ${verb}. All ${prev.reports.filter((r) => r.status === 'open').length} open reports now have a direct simulated path; relay coverage is shown for reference only.`
-              : `Normal network ${verb}. Reachability now depends on the simulated relay mesh — ${after} of ${prev.reports.filter((r) => r.status === 'open').length} open reports reachable.`;
-        } else if (key === 'mesh') {
-          text =
-            value === 'on'
-              ? `Relay mesh ${verb}. ${nextGraph.relayedNodeCount} powered ${nextGraph.relayedNodeCount === 1 ? 'node has' : 'nodes have'} a gateway path. Reachable open reports: ${before} → ${after}.`
-              : `Relay mesh ${verb}. Coverage rings go dark and reachability drops from ${before} to ${after} open reports.`;
-        } else if (value === 'connected') {
-          text = `Gateway ${verb}. Relay traffic can terminate again — reachable open reports: ${before} → ${after}.`;
-        } else {
-          text = `Gateway ${verb}. Relay nodes stay powered but have no destination, so reachability drops from ${before} to ${after} open reports.`;
-        }
-
-        const tone = statusNext.tone === 'ok' ? 'ok' : statusNext.tone === 'critical' ? 'critical' : 'warn';
-
+        const [label, verbs] = labels[key];
+        const text = `${label} ${verbs[value]} by operator. Reachability recalculates on the next render.`;
         return {
           ...prev,
-          network: nextNetwork,
-          networkNote: { title: `Relay network · ${label} ${verb}`, text, tone },
+          network: { ...prev.network, [key]: value },
+          note: { tone: value === 'off' || value === 'unavailable' ? 'warn' : 'ok', title: `${label.toUpperCase()} — ${verbs[value].toUpperCase()}`, text },
+          events: pushEvent({ kind: 'network', tone: 'warn', text: `NETWORK — ${label} ${verbs[value]}.` }, prev.events),
+        };
+      });
+    },
+    [pushEvent],
+  );
+
+  const setDroneStatus = useCallback(
+    (id, nextStatus) => {
+      setState((prev) => {
+        const drone = prev.drones.find((item) => item.id === id);
+        if (!drone || drone.status === nextStatus) return prev;
+        return {
+          ...prev,
+          drones: prev.drones.map((item) => (item.id === id ? { ...item, status: nextStatus } : item)),
+          note: {
+            tone: nextStatus === 'active' ? 'ok' : 'warn',
+            title: `${drone.callsign} — ${nextStatus.toUpperCase()}`,
+            text:
+              nextStatus === 'active'
+                ? 'Drone restored to the mesh. It holds at its current position and adds a simulated relay link.'
+                : `Drone removed from the mesh. Its coverage ring and relay links are dropped; the marker stays parked.`,
+          },
           events: pushEvent(
             {
-              kind: 'network',
-              tone,
-              text: `Network control — ${label} ${verb}. Reachable open reports: ${before} → ${after}.`,
+              kind: 'drone',
+              tone: nextStatus === 'active' ? 'ok' : 'warn',
+              text: `${drone.callsign} set to ${nextStatus.toUpperCase()} by operator.`,
             },
             prev.events,
           ),
@@ -199,30 +367,26 @@ export function useRescueLink() {
       if (!report || report.status !== 'open') return prev;
       const rec = recommendTeam(report, prev.teams);
       if (!rec.team || rec.alreadyAssigned) return prev;
-
-      const reports = prev.reports.map((item) =>
-        item.id === report.id
-          ? { ...item, status: 'assigned', assignedTeam: rec.team.id, assignedAt: Date.now() }
-          : item,
-      );
-      const teams = prev.teams.map((team) =>
-        team.id === rec.team.id ? { ...team, status: 'en_route', assignment: report.id } : team,
-      );
-
       return {
         ...prev,
-        reports,
-        teams,
-        networkNote: {
+        reports: prev.reports.map((item) =>
+          item.id === report.id
+            ? { ...item, status: 'assigned', assignedTeam: rec.team.id, assignedAtSim: prev.simTime }
+            : item,
+        ),
+        teams: prev.teams.map((team) =>
+          team.id === rec.team.id ? { ...team, status: 'en_route', assignment: report.id } : team,
+        ),
+        note: {
           tone: 'ok',
-          title: `Dispatch approved — ${rec.team.id} → ${report.id}`,
-          text: `${rec.team.name} is en route to ${report.site} with capacity for ${report.people} people. Dispatch was approved by the operator; the simulation never assigns teams on its own.`,
+          title: `DISPATCH APPROVED — ${rec.team.callsign ?? rec.team.id} → ${report.id}`,
+          text: `${rec.team.name} marked en route to ${report.site} for ${report.people} people. Approval was an operator action; the simulator never dispatches on its own.`,
         },
         events: pushEvent(
           {
             kind: 'dispatch',
             tone: 'ok',
-            text: `DISPATCH — ${rec.team.id} ${rec.team.name} tasked to ${report.id} at ${report.site} (${report.people} people, ${report.severity}). Operator approval recorded.`,
+            text: `DISPATCH — ${rec.team.id} ${rec.team.name} tasked to ${report.id} at ${report.site} (${report.people} people, ${report.severity}). Operator approved.`,
           },
           prev.events,
         ),
@@ -233,105 +397,50 @@ export function useRescueLink() {
   const fileReport = useCallback(
     (payload) => {
       const id = `RL-0${stateRef.current.reportSeq}`;
-      setState((prev) => {
-        const report = {
-          id,
-          severity: payload.severity,
-          people: payload.people,
-          site: payload.site.label,
-          x: payload.site.x,
-          y: payload.site.y,
-          confidence: payload.confidence,
-          source: payload.source,
-          note: payload.note,
-          status: 'open',
-          receivedAt: Date.now(),
-        };
-        return {
-          ...prev,
-          reports: [...prev.reports, report],
-          reportSeq: prev.reportSeq + 1,
-          selectedId: id,
-          networkNote: {
-            tone: 'warn',
-            title: `New report filed — ${id}`,
-            text: `${payload.severity.toUpperCase()} report for ${payload.people} at ${payload.site.label}. It is now scored against the open queue and reachability is being simulated.`,
+      setState((prev) => ({
+        ...prev,
+        reports: [
+          ...prev.reports,
+          {
+            id,
+            severity: payload.severity,
+            people: payload.people,
+            site: payload.site.label,
+            x: payload.site.x,
+            y: payload.site.y,
+            seedAgeMinutes: 0,
+            confidence: payload.confidence,
+            source: payload.source,
+            note: payload.note,
+            status: 'open',
           },
-          events: pushEvent(
-            {
-              kind: 'report',
-              tone: 'warn',
-              text: `Report ${id} filed manually — ${payload.severity}, ${payload.people} people, ${payload.site.label}, source: ${payload.source}, location confidence ${Math.round(payload.confidence * 100)}%.`,
-            },
-            prev.events,
-          ),
-        };
-      });
+        ],
+        reportSeq: prev.reportSeq + 1,
+        selectedId: id,
+        note: {
+          tone: 'warn',
+          title: `REPORT FILED — ${id}`,
+          text: `${payload.severity.toUpperCase()} · ${payload.people} people at ${payload.site.label}. Added to the demo score queue and reachability simulation.`,
+        },
+        events: pushEvent(
+          {
+            kind: 'report',
+            tone: 'warn',
+            text: `REPORT ${id} filed manually — ${payload.severity}, ${payload.people} people, ${payload.site.label}, ${payload.source}.`,
+          },
+          prev.events,
+        ),
+      }));
       return id;
     },
     [pushEvent],
   );
 
-
-  const setNodeStatus = useCallback(
-    (id, nextStatus) => {
-      setState((prev) => {
-        const node = prev.nodes.find((item) => item.id === id);
-        if (!node || node.status === nextStatus) return prev;
-        const nodes = prev.nodes.map((item) =>
-          item.id === id ? { ...item, status: nextStatus } : item,
-        );
-        const nextGraph = computeRelayGraph(prev.network, nodes, GATEWAY);
-        const before = countReachable(prev.reports, prev.network, computeRelayGraph(prev.network, prev.nodes, GATEWAY), prev.nodes);
-        const after = countReachable(prev.reports, prev.network, nextGraph, nodes);
-        return {
-          ...prev,
-          nodes,
-          networkNote: {
-            tone: nextStatus === 'active' ? 'ok' : 'warn',
-            title: `${node.label} · ${nextStatus}`,
-            text: `Node status changed to ${nextStatus}. Powered nodes with a simulated gateway path: ${nextGraph.relayedNodeCount}/${nodes.length}. Reachable open reports: ${before} → ${after}.`,
-          },
-          events: pushEvent(
-            {
-              kind: 'network',
-              tone: nextStatus === 'active' ? 'ok' : 'warn',
-              text: `Relay node ${node.id} ${node.label} set to ${nextStatus}. Reachable open reports: ${before} → ${after}.`,
-            },
-            prev.events,
-          ),
-        };
-      });
-    },
-    [pushEvent],
-  );
-
-  const reset = useCallback(() => {
-    const fresh = createState();
-    setState({
-      ...fresh,
-      events: [
-        {
-          id: nextEventId(),
-          at: Date.now(),
-          kind: 'system',
-          tone: 'neutral',
-          text: 'SCENARIO RESET — exercise restored to the starting blackout state.',
-        },
-        ...fresh.events,
-      ],
-      networkNote: {
-        title: 'Scenario reset',
-        text: 'Starting picture restored: normal network unavailable, relay mesh off, gateway connected, all seeded reports and teams back to their initial state.',
-        tone: 'warn',
-      },
-    });
-    setNow(Date.now());
-  }, []);
-
   return {
     ...state,
-    now,
+    scenarioStart: SCENARIO_START,
+    gateway: GATEWAY,
+    droneStates,
     graph,
     reports,
     selected,
@@ -339,14 +448,31 @@ export function useRescueLink() {
     recommendation,
     summary,
     status,
-    nodes: state.nodes,
-    gateway: GATEWAY,
-    selectReport,
-    clearSelection,
-    setNetwork,
-    dispatch,
-    fileReport,
-    setNodeStatus,
-    reset,
+    actions: {
+      start,
+      pause,
+      step,
+      reset,
+      setSpeed,
+      selectReport,
+      clearSelection,
+      setNetwork,
+      setDroneStatus,
+      dispatch,
+      fileReport,
+    },
   };
+}
+
+export function formatSimLabel(seconds) {
+  const total = Math.max(0, Math.floor(seconds));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/** Log stamps keep their direction so seeded history reads as pre-simulation. */
+export function formatLogStamp(seconds) {
+  const sign = seconds < 0 ? '-' : '+';
+  return `T${sign}${formatSimLabel(Math.abs(seconds))}`;
 }

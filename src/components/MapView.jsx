@@ -1,71 +1,52 @@
 import { memo, useMemo } from 'react';
-import { FLOOD_BOUNDARY, RIVER_PATH } from '../data/scenario.js';
+import { FLOOD_BOUNDARY, RIVER_PATH, STAGING } from '../data/scenario.js';
 import { SEVERITY_META } from '../lib/simulation.js';
 import { formatPct } from '../lib/format.js';
 
-const CFG = {
-  critical: { color: '#ff5f7a', shape: 'diamond' },
-  high: { color: '#ffa64d', shape: 'triangle' },
-  moderate: { color: '#ffd76a', shape: 'circle' },
-  low: { color: '#7fd7ff', shape: 'square' },
+const SEV_COLOR = {
+  critical: '#ff5f6e',
+  high: '#f0a24a',
+  moderate: '#e8cf72',
+  low: '#8dd6ef',
 };
 
-const TEAM_COLORS = {
-  available: '#4be0a8',
-  en_route: '#ffc46b',
-  unavailable: '#7d8c9f',
-};
+const DRONE_COLOR = { active: '#5fe3ff', standby: '#f0b95e', offline: '#5b7185' };
 
 function boundaryPath(points) {
   return `M${points.map(([x, y]) => `${x},${y}`).join(' L')} Z`;
 }
-
-function smoothPath(points) {
+function polyline(points) {
   return points.map(([x, y], i) => `${i === 0 ? 'M' : 'L'}${x},${y}`).join(' ');
 }
 
-function severitySymbol(severity, x, y, selected) {
-  const { color, shape } = CFG[severity];
-  const scale = selected ? 1.12 : 1;
-  const common = {
-    fill: color,
-    stroke: '#050a12',
-    strokeWidth: 1.6,
-    filter: 'url(#markerGlow)',
-  };
-  return (
-    <g transform={`translate(${x} ${y}) scale(${scale})`} className="report-symbol">
-      <circle r="13" fill="rgba(5,10,18,0.72)" stroke={color} strokeWidth="1" strokeOpacity="0.55" />
-      {shape === 'diamond' && <rect x="-7" y="-7" width="14" height="14" transform="rotate(45)" {...common} />}
-      {shape === 'triangle' && <path d="M0 -8.5 8 6.5H-8Z" {...common} />}
-      {shape === 'circle' && <circle r="6.6" {...common} />}
-      {shape === 'square' && <rect x="-6" y="-6" width="12" height="12" rx="1.4" {...common} />}
-      {severity === 'critical' && (
-        <>
-          <rect x="-1" y="-4.4" width="2" height="5.4" fill="#1a0610" />
-          <circle cy="3.2" r="1.1" fill="#1a0610" />
-        </>
-      )}
-    </g>
-  );
-}
-
-function ReportMarker({ report, selected, dimmed, onSelect }) {
+function ReportMarker({ report, selected, onSelect }) {
   const meta = SEVERITY_META[report.severity];
+  const color = SEV_COLOR[report.severity];
+  const labelW = 74;
+  const side = report.labelSide ?? (report.x + 13 + labelW > 992 ? 'left' : 'right');
+  const lx =
+    side === 'left'
+      ? report.x - 13 - labelW
+      : side === 'right'
+        ? report.x + 13
+        : report.x - labelW / 2;
+  const ly = side === 'top' ? report.y - 30 : side === 'bottom' ? report.y + 13 : report.y - 8;
+  const leader =
+    side === 'left'
+      ? { x1: report.x - 11, y1: report.y, x2: lx + labelW, y2: report.y }
+      : side === 'right'
+        ? { x1: report.x + 11, y1: report.y, x2: lx, y2: report.y }
+        : side === 'top'
+          ? { x1: report.x, y1: report.y - 10, x2: report.x, y2: ly + 17 }
+          : { x1: report.x, y1: report.y + 10, x2: report.x, y2: ly };
   const reachable = report.reachability.reachable;
-  const chipW = 150;
-  const chipH = 40;
-  // keep the readout inside the schematic: flip it left near the right edge
-  const flip = report.x + 16 + chipW > 992;
-  const chipX = flip ? report.x - 16 - chipW : report.x + 16;
-  const chipY = report.y - 20;
-  const label = `${report.id}, ${meta.label} severity, ${report.people} people at ${report.site}. ${
-    reachable ? 'Reachable' : 'Not reachable'
-  } in the simulated network.${selected ? ' Selected.' : ''}`;
+  const label = `${report.id}, ${meta.label} severity, ${report.people} people at ${report.site}, ${
+    reachable ? `reachable via ${report.reachability.via}` : 'unreachable'
+  }, score ${report.ranked.score.toFixed(1)}.`;
 
   return (
     <g
-      className={`map-report sev-${meta.tone}${selected ? ' is-selected' : ''}${reachable ? '' : ' is-unreachable'}`}
+      className={`rpt${selected ? ' is-selected' : ''}${reachable ? '' : ' is-unreachable'} sev-${meta.tone}`}
       role="button"
       tabIndex={0}
       aria-label={label}
@@ -80,371 +61,401 @@ function ReportMarker({ report, selected, dimmed, onSelect }) {
           onSelect(report.id);
         }
       }}
-      opacity={dimmed ? 0.42 : 1}
     >
-      <title>
-        {report.id} · {meta.label} · {report.site} · {report.people} people · {reachable ? 'reachable' : 'no simulated path'}
-      </title>
+      <title>{label}</title>
       {selected && (
         <>
-          <circle cx={report.x} cy={report.y} r="22" className="selection-reticle" />
-          <circle cx={report.x} cy={report.y} r="29" className="selection-reticle selection-reticle--outer" />
+          <rect x={report.x - 13} y={report.y - 13} width="26" height="26" className="sel-bracket" />
+          <path
+            d={`M${report.x - 19} ${report.y}h-6M${report.x + 19} ${report.y}h6M${report.x} ${report.y - 19}v-6M${report.x} ${report.y + 19}v6`}
+            className="sel-cross"
+          />
         </>
       )}
-      {(report.severity === 'critical' || selected) && (
-        <circle cx={report.x} cy={report.y} r="13" fill="none" stroke={CFG[report.severity].color} className="report-pulse" />
-      )}
-      {reachable && report.reachability.path === 'relay' && (
-        <line
-          x1={report.x}
-          y1={report.y}
-          x2={report.reachability.nodeX ?? report.x}
-          y2={report.reachability.nodeY ?? report.y}
-          className="report-link"
-        />
-      )}
-      <line
-        x1={report.x + (flip ? -12 : 12)}
-        y1={report.y}
-        x2={flip ? chipX + chipW : chipX}
-        y2={chipY + chipH / 2}
-        className="chip-leader"
-      />
-      {severitySymbol(report.severity, report.x, report.y, selected)}
-      <g className="report-chip">
-        <rect x={chipX} y={chipY} width={chipW} height={chipH} rx="4" />
-        <text x={chipX + 13} y={chipY + 17} className="chip-id">
+      <rect x={report.x - 9} y={report.y - 9} width="18" height="18" className="rpt-hit" />
+      <g className="rpt-sym">
+        {report.severity === 'critical' && <path d={`M${report.x} ${report.y - 6} ${report.x + 5.6} ${report.y + 4.4}H${report.x - 5.6}Z`} fill={color} />}
+        {report.severity === 'high' && <rect x={report.x - 5} y={report.y - 5} width="10" height="10" fill={color} />}
+        {report.severity === 'moderate' && <circle cx={report.x} cy={report.y} r="5.2" fill={color} />}
+        {report.severity === 'low' && <path d={`M${report.x} ${report.y - 5.4} ${report.x + 5.4} ${report.y} ${report.x} ${report.y + 5.4} ${report.x - 5.4} ${report.y}Z`} fill={color} />}
+        {!reachable && (
+          <path
+            d={`M${report.x - 8} ${report.y - 8} ${report.x + 8} ${report.y + 8}M${report.x + 8} ${report.y - 8} ${report.x - 8} ${report.y + 8}`}
+            className="rpt-nolink"
+          />
+        )}
+      </g>
+      <line {...leader} className="rpt-leader" />
+      <g className="rpt-label">
+        <rect x={lx} y={ly} width={labelW} height="17" />
+        <text x={lx + 5} y={ly + 12} className="rpt-id">
           {report.id}
         </text>
-        <text x={chipX + 13} y={chipY + 31} className={`chip-sev sev-${meta.tone}`}>
-          {meta.label.toUpperCase()} · {report.people}P
-        </text>
-        <g transform={`translate(${chipX + chipW - 48} ${chipY + 13})`}>
-          {reachable ? (
-            <>
-              <circle r="4.4" className="chip-link-dot" />
-              <circle r="1.7" fill="#040a12" />
-            </>
-          ) : (
-            <>
-              <circle r="4.4" className="chip-nolink-dot" />
-              <path d="M-1.9 -1.9 1.9 1.9M1.9 -1.9-1.9 1.9" stroke="#040a12" strokeWidth="1.1" />
-            </>
-          )}
-        </g>
-        <text x={chipX + chipW - 10} y={chipY + 31} className="chip-conf" textAnchor="end">
-          {formatPct(report.confidence)}
-        </text>
-        <text x={chipX + chipW - 10} y={chipY + 16} className="chip-conf chip-conf--label" textAnchor="end">
-          CONF
+        <text x={lx + labelW - 5} y={ly + 12} className="rpt-people" textAnchor="end">
+          {report.people}P · {formatPct(report.confidence)}
         </text>
       </g>
     </g>
   );
 }
 
-function TeamMarker({ team, report }) {
-  const color = TEAM_COLORS[team.status] ?? TEAM_COLORS.unavailable;
-  const statusLabel =
-    team.status === 'en_route' ? `En route to ${team.assignment}` : team.status === 'available' ? 'Available' : 'Unavailable';
-  const actionable = report && team.status === 'available' && team.capacity >= report.people;
+function TeamMarker({ team, eligible }) {
+  const side = team.labelSide ?? 'right';
+  const tx = side === 'left' ? team.x - 12 : team.x + 12;
+  const anchor = side === 'left' ? 'end' : 'start';
   return (
-    <g className={`map-team status-${team.status}${actionable ? ' is-candidate' : ''}`}>
-      {actionable && <circle cx={team.x} cy={team.y} r="17" className="team-candidate-ring" />}
+    <g className={`team st-${team.status}${eligible ? ' is-eligible' : ''}`}>
       <g transform={`translate(${team.x} ${team.y})`}>
-        <path d="M0 -11 9 0 0 11-9 0Z" fill="rgba(6,12,20,0.9)" stroke={color} strokeWidth="1.6" />
-        <circle r="3.1" fill={color} />
+        <path d="M0 -7.4 7.4 0 0 7.4-7.4 0Z" className="team-sym" />
+        <circle r="1.8" className="team-core" />
       </g>
-      <g className="team-chip" textAnchor="end">
-        <text x={team.x - 18} y={team.y - 2} className="team-id">
-          {team.id}
-        </text>
-        <text x={team.x - 18} y={team.y + 11} className="team-status" style={{ fill: color }}>
-          {statusLabel.toUpperCase()} · {team.capacity} CAP
-        </text>
+      <text x={tx} y={team.y - 1} className="team-id" textAnchor={anchor}>
+        {team.id}
+      </text>
+      <text x={tx} y={team.y + 8} className="team-status" textAnchor={anchor}>
+        {team.status === 'en_route' ? 'EN ROUTE' : team.status.toUpperCase()} · {team.capacity} CAP
+      </text>
+    </g>
+  );
+}
+
+function DroneMarker({ drone }) {
+  const color = DRONE_COLOR[drone.status] ?? DRONE_COLOR.offline;
+  const active = drone.status === 'active';
+  const connected = drone.connected;
+  const label = `${drone.callsign} · ${drone.id}, ${drone.status.toUpperCase()}${
+    active ? `, task ${drone.task}, battery ${Math.round(drone.battery)} percent` : ''
+  }.`;
+
+  return (
+    <g className={`drone st-${drone.status}${drone.moving ? ' is-moving' : ''}`} aria-hidden="true">
+      <title>{label}</title>
+
+      {drone.trail.length > 1 && (
+        <g className="drone-trail">
+          {drone.trail.map((point, index) => {
+            const next = drone.trail[index + 1] ?? { x: drone.x, y: drone.y };
+            return (
+              <line
+                key={`${drone.id}-t${index}`}
+                x1={point.x}
+                y1={point.y}
+                x2={next.x}
+                y2={next.y}
+                style={{ opacity: point.age * 0.55 }}
+              />
+            );
+          })}
+        </g>
+      )}
+
+      <g transform={`translate(${drone.x} ${drone.y}) rotate(${drone.heading})`} className="drone-body">
+        {active && <circle r="11" className="drone-halo" />}
+        <path d="M0 -6.4 6.4 -3.2 6.4 3.2 0 6.4-6.4 3.2-6.4-3.2Z" className="drone-hex" stroke={color} />
+        {drone.moving && <path d="M0 -11.8 -2.8 -8.6H2.8Z" className="drone-heading" stroke={color} fill={color} />}
+        <circle r="1.7" fill={color} />
+      </g>
+
+      <g className="drone-tag">
+        {(() => {
+          const dy = drone.labelDy ?? 0;
+          const dir = drone.labelSide === 'left' ? -1 : 1;
+          const tx = drone.x + dir * 20;
+          return (
+            <>
+              <line
+                x1={drone.x + dir * 8}
+                y1={drone.y - 8}
+                x2={drone.x + dir * 17}
+                y2={drone.y - 15 + Math.min(0, dy)}
+                className="drone-leader"
+              />
+              <g textAnchor={drone.labelSide === 'left' ? 'end' : 'start'}>
+                <text x={tx} y={drone.y - 15 + dy} className="drone-name" style={{ fill: color }}>
+                  {drone.callsign}
+                </text>
+                <text x={tx} y={drone.y - 6 + dy} className="drone-meta">
+                  {drone.status.toUpperCase()}
+                  {active ? ` · ${connected ? 'LINKED' : 'NO PATH'}` : ''}
+                  {active ? ` · ${Math.round(drone.battery)}%` : ''}
+                </text>
+                {active && (
+                  <text x={tx} y={drone.y + 3 + dy} className="drone-task">
+                    {drone.task}
+                  </text>
+                )}
+              </g>
+            </>
+          );
+        })()}
       </g>
     </g>
   );
 }
 
-function MapView({ reports, teams, nodes, gateway, network, graph, selectedId, onSelect, onClear }) {
+function MapView({ reports, teams, droneStates, gateway, network, graph, selectedId, onSelect, onClear, reducedMotion }) {
   const meshOn = network.mesh === 'on';
   const selected = reports.find((report) => report.id === selectedId) ?? null;
+  const eligibleIds = useMemo(() => new Set(), []);
 
-  const enriched = useMemo(() => {
-    const nodeById = new Map(nodes.map((node) => [node.id, node]));
-    return reports.map((report) => {
-      const node = report.reachability.nodeId ? nodeById.get(report.reachability.nodeId) : null;
-      return {
-        ...report,
-        reachability: { ...report.reachability, nodeX: node?.x, nodeY: node?.y },
-      };
-    });
-  }, [reports, nodes]);
-
-  const gridTicks = useMemo(() => {
-    const ticks = [];
-    for (let x = 100; x < 1000; x += 100) ticks.push(x);
-    return ticks;
-  }, []);
+  const xTicks = useMemo(() => Array.from({ length: 19 }, (_, i) => (i + 1) * 50), []);
+  const yTicks = useMemo(() => Array.from({ length: 13 }, (_, i) => (i + 1) * 50), []);
+  const droneById = useMemo(
+    () => new Map(droneStates.map((drone) => [drone.id, drone])),
+    [droneStates],
+  );
 
   return (
-    <div className="map-canvas">
-      <div className="map-overlays map-overlays--top">
-        <span className="map-badge map-badge--sim">
-          <span className="sim-dot" aria-hidden="true" />
-          SIMULATED COVERAGE — NOT RADIO PERFORMANCE
-        </span>
-      </div>
-
+    <div className="map" onClick={onClear} role="presentation">
       <svg
         className="map-svg"
         viewBox="0 0 1000 700"
         preserveAspectRatio="xMidYMid meet"
         role="group"
-        aria-label="Schematic map of the fictional Kaiva Basin response area, showing flood extent, simulated drone relay coverage rings, relay nodes, gateway, rescue teams and help report markers."
+        aria-label="Schematic response map of the fictional Kaiva Basin: flood extent, help reports, rescue teams, simulated relay drones with coverage arcs and relay links, and the AEGIS gateway."
       >
         <defs>
-          <pattern id="gridFine" width="25" height="25" patternUnits="userSpaceOnUse">
-            <path d="M25 0H0V25" fill="none" stroke="#6fd8ff" strokeWidth="0.5" strokeOpacity="0.055" />
+          <pattern id="gridS" width="25" height="25" patternUnits="userSpaceOnUse">
+            <path d="M25 0H0V25" fill="none" stroke="#6fd8ff" strokeWidth="0.5" strokeOpacity="0.05" />
           </pattern>
-          <pattern id="gridMajor" width="100" height="100" patternUnits="userSpaceOnUse">
-            <path d="M100 0H0V100" fill="none" stroke="#6fd8ff" strokeWidth="0.9" strokeOpacity="0.1" />
+          <pattern id="gridL" width="100" height="100" patternUnits="userSpaceOnUse">
+            <path d="M100 0H0V100" fill="none" stroke="#6fd8ff" strokeWidth="0.8" strokeOpacity="0.1" />
           </pattern>
-          <pattern id="floodHatch" width="16" height="16" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
-            <line x1="0" y1="0" x2="0" y2="16" stroke="#5fd4ff" strokeWidth="1" strokeOpacity="0.11" />
+          <pattern id="hatch" width="14" height="14" patternUnits="userSpaceOnUse" patternTransform="rotate(35)">
+            <line x1="0" y1="0" x2="0" y2="14" stroke="#57c8ea" strokeWidth="1" strokeOpacity="0.1" />
           </pattern>
           <radialGradient id="floodFill" cx="50%" cy="52%" r="62%">
-            <stop offset="0%" stopColor="#0f4562" stopOpacity="0.62" />
-            <stop offset="68%" stopColor="#0a2b40" stopOpacity="0.5" />
-            <stop offset="100%" stopColor="#07141f" stopOpacity="0.28" />
+            <stop offset="0%" stopColor="#0e3c54" stopOpacity="0.5" />
+            <stop offset="70%" stopColor="#0a2434" stopOpacity="0.42" />
+            <stop offset="100%" stopColor="#06121c" stopOpacity="0.24" />
           </radialGradient>
-          <radialGradient id="coverageFill" cx="50%" cy="50%" r="50%">
-            <stop offset="0%" stopColor="#4fd6ff" stopOpacity="0.1" />
-            <stop offset="72%" stopColor="#4fd6ff" stopOpacity="0.045" />
-            <stop offset="100%" stopColor="#4fd6ff" stopOpacity="0" />
+          <radialGradient id="coverFill" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stopColor="#5fe3ff" stopOpacity="0.075" />
+            <stop offset="100%" stopColor="#5fe3ff" stopOpacity="0" />
           </radialGradient>
-          <linearGradient id="riverStroke" x1="0" y1="0" x2="1000" y2="0" gradientUnits="userSpaceOnUse">
-            <stop offset="0%" stopColor="#2d8ab8" stopOpacity="0.25" />
-            <stop offset="50%" stopColor="#69dcff" stopOpacity="0.55" />
-            <stop offset="100%" stopColor="#2d8ab8" stopOpacity="0.22" />
+          <linearGradient id="riverGrad" x1="0" y1="0" x2="1000" y2="0" gradientUnits="userSpaceOnUse">
+            <stop offset="0%" stopColor="#2b7f9f" stopOpacity="0.18" />
+            <stop offset="50%" stopColor="#5fd0ee" stopOpacity="0.42" />
+            <stop offset="100%" stopColor="#2b7f9f" stopOpacity="0.16" />
           </linearGradient>
-          <linearGradient id="scanGrad" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0%" stopColor="#7fe9ff" stopOpacity="0" />
-            <stop offset="60%" stopColor="#7fe9ff" stopOpacity="0.05" />
-            <stop offset="100%" stopColor="#7fe9ff" stopOpacity="0" />
-          </linearGradient>
-          <radialGradient id="vignette" cx="50%" cy="45%" r="72%">
-            <stop offset="55%" stopColor="#000" stopOpacity="0" />
-            <stop offset="100%" stopColor="#01050b" stopOpacity="0.72" />
+          <radialGradient id="vig" cx="50%" cy="46%" r="74%">
+            <stop offset="58%" stopColor="#000" stopOpacity="0" />
+            <stop offset="100%" stopColor="#01050a" stopOpacity="0.66" />
           </radialGradient>
-          <filter id="markerGlow" x="-80%" y="-80%" width="260%" height="260%">
-            <feGaussianBlur stdDeviation="2.4" result="blur" />
+          <filter id="glow" x="-70%" y="-70%" width="240%" height="240%">
+            <feGaussianBlur stdDeviation="2" result="b" />
             <feMerge>
-              <feMergeNode in="blur" />
+              <feMergeNode in="b" />
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          <filter id="softGlow" x="-60%" y="-60%" width="220%" height="220%">
-            <feGaussianBlur stdDeviation="5" />
-          </filter>
         </defs>
 
-        {/* base + grid */}
-        <rect width="1000" height="700" fill="#040910" onClick={onClear} />
-        <rect width="1000" height="700" fill="url(#gridFine)" pointerEvents="none" />
-        <rect width="1000" height="700" fill="url(#gridMajor)" pointerEvents="none" />
+        <rect width="1000" height="700" fill="#040910" />
+        <rect width="1000" height="700" fill="url(#gridS)" />
+        <rect width="1000" height="700" fill="url(#gridL)" />
 
-        {/* technical markings */}
-        <g className="map-marks" aria-hidden="true">
-          {gridTicks.map((x) => (
+        {/* coordinate detail */}
+        <g className="coords" aria-hidden="true">
+          {xTicks.map((x) => (
             <g key={`x${x}`}>
-              <line x1={x} y1="0" x2={x} y2="8" />
-              <line x1={x} y1="692" x2={x} y2="700" />
+              <line x1={x} y1="0" x2={x} y2={x % 100 === 0 ? 9 : 5} />
+              {x % 100 === 0 && (
+                <text x={x} y="20" textAnchor="middle">
+                  {String(x).padStart(4, '0')}
+                </text>
+              )}
             </g>
           ))}
-          {[100, 200, 300, 400, 500, 600].map((y) => (
+          {yTicks.map((y) => (
             <g key={`y${y}`}>
-              <line x1="0" y1={y} x2="8" y2={y} />
-              <line x1="992" y1={y} x2="1000" y2={y} />
-              <text x="16" y={y - 5}>N{String(y).padStart(4, '0')}</text>
+              <line x1="0" y1={y} x2={y % 100 === 0 ? 9 : 5} y2={y} />
+              {y % 100 === 0 && (
+                <text x="14" y={y - 4}>
+                  {String(y).padStart(4, '0')}
+                </text>
+              )}
             </g>
           ))}
-          <circle cx="497" cy="352" r="250" className="map-orbit" />
-          <circle cx="497" cy="352" r="330" className="map-orbit map-orbit--dashed" />
-          <path d="M497 60V96M497 608v36M190 352h-36M840 352h36" className="map-crosshair" />
-          <text x="500" y="366" className="map-watermark">KAIVA BASIN</text>
+          <text x="500" y="684" textAnchor="middle" className="coords-watermark">
+            KAIVA BASIN · SCHEMATIC · NOT TO SCALE
+          </text>
         </g>
 
         {/* flood extent */}
         <g aria-hidden="true">
           <path d={boundaryPath(FLOOD_BOUNDARY)} fill="url(#floodFill)" />
-          <path d={boundaryPath(FLOOD_BOUNDARY)} fill="url(#floodHatch)" />
-          <path d={boundaryPath(FLOOD_BOUNDARY)} className="flood-boundary" />
-          <path d={smoothPath(RIVER_PATH)} className="river" />
-          <text x="232" y="414" className="flood-label">FLOOD EXTENT · SIMULATED</text>
-          <text x="612" y="562" className="river-label">KAIVA SPILL CHANNEL</text>
+          <path d={boundaryPath(FLOOD_BOUNDARY)} fill="url(#hatch)" />
+          <path d={boundaryPath(FLOOD_BOUNDARY)} className="flood-edge" />
+          <path d={polyline(RIVER_PATH)} className="river" />
+          <text x="96" y="352" className="flood-label">
+            FLOOD EXTENT · SIMULATED
+          </text>
         </g>
 
-        {/* coverage rings */}
+        {/* gateway range + coverage arcs */}
         <g aria-hidden="true">
-          {nodes.map((node) => {
-            const active = node.status === 'active';
-            const live = active && meshOn;
+          {network.gateway === 'connected' && meshOn && (
+            <circle cx={gateway.x} cy={gateway.y} r={gateway.range} className="gw-range" />
+          )}
+          {droneStates.map((drone) => {
+            const live = drone.status === 'active' && meshOn && network.gateway === 'connected';
+            const linked = drone.connected;
             return (
-              <g key={node.id} className={`coverage ${live ? 'coverage--live' : active ? 'coverage--idle' : 'coverage--dead'}`}>
-                {live && <circle cx={node.x} cy={node.y} r={node.radius} fill="url(#coverageFill)" />}
-                <circle cx={node.x} cy={node.y} r={node.radius} className="coverage-ring" />
-                <circle cx={node.x} cy={node.y} r={node.radius - 9} className="coverage-ring coverage-ring--inner" />
-                {live && <circle cx={node.x} cy={node.y} r={node.radius} className="coverage-sweep" />}
+              <g key={`cov-${drone.id}`} className={`cover${live ? ' is-live' : ''}${linked ? ' is-linked' : ''}`}>
+                {live && drone.moving && <circle cx={drone.x} cy={drone.y} r={drone.range} fill="url(#coverFill)" />}
+                <circle cx={drone.x} cy={drone.y} r={drone.range} className="cover-ring" />
+                <circle cx={drone.x} cy={drone.y} r={drone.range - 12} className="cover-ring cover-ring--inner" />
+                {live && !reducedMotion && (
+                  <g className="cover-sweep" style={{ transformOrigin: `${drone.x}px ${drone.y}px` }}>
+                    <line x1={drone.x} y1={drone.y} x2={drone.x + drone.range} y2={drone.y} className="cover-sweep-line" />
+                  </g>
+                )}
               </g>
             );
           })}
         </g>
 
-        {/* mesh links */}
+        {/* relay links */}
         <g aria-hidden="true">
           {graph.links.map((link, index) => {
-            const from = link.from === gateway.id ? gateway : nodes.find((node) => node.id === link.from);
-            const to = link.to === gateway.id ? gateway : nodes.find((node) => node.id === link.to);
+            const from = droneById.get(link.from);
+            const to = link.to === gateway.id ? gateway : droneById.get(link.to);
             if (!from || !to) return null;
             return (
-              <g key={`${link.from}-${link.to}`} className="mesh-link">
-                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} className="mesh-link-line" />
+              <g key={`${link.from}-${link.to}`} className={`link link--${link.kind}`}>
+                <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} className="link-line" />
                 <line
                   x1={from.x}
                   y1={from.y}
                   x2={to.x}
                   y2={to.y}
-                  className="mesh-link-packet"
-                  style={{ animationDelay: `${index * 0.7}s` }}
+                  className="link-packet"
+                  style={{ animationDelay: `${index * 0.55}s` }}
                 />
               </g>
             );
           })}
-          {!meshOn && (
-            <g>
-              {nodes
-                .filter((node) => node.status === 'active')
-                .map((node) => (
-                  <line
-                    key={`ghost-${node.id}`}
-                    x1={node.x}
-                    y1={node.y}
-                    x2={gateway.x}
-                    y2={gateway.y}
-                    className="mesh-link-ghost"
-                  />
-                ))}
-            </g>
-          )}
+        </g>
+
+        {/* report to relay links */}
+        <g aria-hidden="true">
+          {reports.map((report) => {
+            if (!report.reachability.reachable || !report.reachability.droneId) return null;
+            const drone = droneById.get(report.reachability.droneId);
+            if (!drone) return null;
+            return (
+              <line
+                key={`rl-${report.id}`}
+                x1={report.x}
+                y1={report.y}
+                x2={drone.x}
+                y2={drone.y}
+                className={`report-link${report.id === selectedId ? ' is-selected' : ''}`}
+              />
+            );
+          })}
+        </g>
+
+        {/* staging pad */}
+        <g aria-hidden="true" className="staging">
+          <circle cx={STAGING.x} cy={STAGING.y} r="17" className="staging-ring" />
+          <path d={`M${STAGING.x - 11} ${STAGING.y}h22M${STAGING.x} ${STAGING.y - 11}v22`} className="staging-cross" />
+          <text x={STAGING.x - 24} y={STAGING.y + 30} textAnchor="end" className="staging-label">
+            STAGING PAD
+          </text>
         </g>
 
         {/* gateway */}
-        <g aria-hidden="true" className={`gateway ${network.gateway === 'connected' ? 'is-up' : 'is-down'}`}>
-          <circle cx={gateway.x} cy={gateway.y} r="34" className="gateway-halo" />
+        <g aria-hidden="true" className={`gateway${network.gateway === 'connected' ? ' is-up' : ' is-down'}`}>
+          <circle cx={gateway.x} cy={gateway.y} r="26" className="gw-halo" />
           <g transform={`translate(${gateway.x} ${gateway.y})`}>
-            <path d="M0 -15 13 -7.5V7.5L0 15-13 7.5V-7.5Z" className="gateway-hex" />
-            <path d="M0 -8 7 -4v8L0 8-7 4v-8Z" className="gateway-core" />
-            <path d="M-19 -12A24 24 0 0 0-19 12M19 -12A24 24 0 0 1 19 12" className="gateway-wave" />
+            <path d="M0 -12 10.4 -6V6L0 12-10.4 6V-6Z" className="gw-hex" />
+            <path d="M0 -5.6 5 -2.8v5.6L0 5.6-5 2.8v-5.6Z" className="gw-core" />
+            <path d="M-15.6 -8A19 19 0 0 0-15.6 8M15.6 -8A19 19 0 0 1 15.6 8" className="gw-wave" />
           </g>
-          <g textAnchor="end">
-            <text x={gateway.x - 40} y={gateway.y + 2} className="gateway-name">AEGIS-GW-01</text>
-            <text x={gateway.x - 40} y={gateway.y + 15} className="gateway-sub">
-              GATEWAY · {network.gateway === 'connected' ? 'CONNECTED' : 'UNAVAILABLE'}
-            </text>
-          </g>
-        </g>
-
-        {/* relay nodes */}
-        <g>
-          {nodes.map((node) => {
-            const hops = graph.hops[node.id];
-            const linkLabel = !meshOn
-              ? 'MESH OFF'
-              : node.status !== 'active'
-                ? 'NO POWER'
-                : hops
-                  ? `${hops} HOP${hops === 1 ? '' : 'S'}`
-                  : 'NO PATH';
-            return (
-              <g key={node.id} className={`relay-node status-${node.status}`} aria-hidden="true">
-                <g transform={`translate(${node.x} ${node.y})`}>
-                  <path d="M0 -11 9.5 -5.5V5.5L0 11-9.5 5.5V-5.5Z" className="node-hex" />
-                  <circle r="2.6" className="node-core" />
-                </g>
-                <text x={node.x} y={node.y - 18} textAnchor="middle" className="node-name">
-                  {node.label}
-                </text>
-                <text x={node.x} y={node.y + 26} textAnchor="middle" className="node-state">
-                  {node.status.toUpperCase()} · {linkLabel}
-                </text>
-              </g>
-            );
-          })}
+          <text x={gateway.x - 22} y={gateway.y - 2} textAnchor="end" className="gw-name">
+            {gateway.label}
+          </text>
+          <text x={gateway.x - 22} y={gateway.y + 8} textAnchor="end" className="gw-sub">
+            {gateway.id} · {network.gateway === 'connected' ? 'CONNECTED' : 'UNAVAILABLE'}
+          </text>
         </g>
 
         {/* teams */}
         <g>
           {teams.map((team) => (
-            <TeamMarker key={team.id} team={team} report={selected} />
+            <TeamMarker key={team.id} team={team} eligible={eligibleIds.has(team.id)} />
           ))}
         </g>
 
         {/* reports */}
         <g>
-          {enriched.map((report) => (
+          {reports.map((report) => (
             <ReportMarker
               key={report.id}
               report={report}
               selected={report.id === selectedId}
-              dimmed={Boolean(selectedId) && report.id !== selectedId && report.status === 'assigned'}
               onSelect={onSelect}
             />
           ))}
         </g>
 
-        {/* edge readouts */}
-        <g className="map-readout" aria-hidden="true">
-          <g transform="translate(26 636)">
-            <path d="M0 0V-26M0 -26 -5 -15M0 -26 5 -15" />
-            <text x="14" y="-18">N</text>
-            <text x="14" y="-5" className="map-readout-sub">SCHEMATIC</text>
-          </g>
-          <g transform="translate(830 660)">
-            <line x1="0" y1="0" x2="140" y2="0" />
-            <line x1="0" y1="-4" x2="0" y2="4" />
-            <line x1="70" y1="-3" x2="70" y2="3" />
-            <line x1="140" y1="-4" x2="140" y2="4" />
-            <text x="0" y="-9">0</text>
-            <text x="140" y="-9" textAnchor="end">140 UNITS</text>
-            <text x="70" y="14" textAnchor="middle" className="map-readout-sub">NOT TO SCALE</text>
-          </g>
+        {/* planned routes for active drones */}
+        <g aria-hidden="true" className="routes">
+          {droneStates.map((drone) =>
+            drone.status === 'active' && drone.legs.length ? (
+              <path
+                key={`route-${drone.id}`}
+                d={`M${drone.start.x},${drone.start.y} ${drone.legs.map((leg) => `L${leg.to.x},${leg.to.y}`).join(' ')}`}
+                className="route-line"
+              />
+            ) : null,
+          )}
+          {droneStates
+            .filter((drone) => drone.status === 'active' && drone.legs.length)
+            .map((drone) =>
+              drone.legs.map((leg) => (
+                <g key={`wp-${drone.id}-${leg.to.x}-${leg.to.y}`} className="waypoint">
+                  <path d={`M${leg.to.x - 3} ${leg.to.y}h6v6h-6z`} />
+                </g>
+              )),
+            )}
         </g>
 
-        <rect width="1000" height="700" fill="url(#vignette)" pointerEvents="none" />
-        <rect className="map-scan" width="1000" height="120" fill="url(#scanGrad)" pointerEvents="none" />
-        <rect width="1000" height="700" fill="none" className="map-frame" pointerEvents="none" />
+        {/* drones */}
+        <g>
+          {droneStates.map((drone) => (
+            <DroneMarker key={drone.id} drone={drone} />
+          ))}
+        </g>
+
+        <rect width="1000" height="700" fill="url(#vig)" pointerEvents="none" />
+        {!reducedMotion && <rect className="scanline" width="1000" height="90" pointerEvents="none" />}
       </svg>
 
-      <div className="map-statusbar">
-        <span className="map-caption">
-          {network.normal === 'available'
-            ? 'Normal network available · relay overlay is reference only'
-            : meshOn
-              ? `Relay overlay live · ${graph.relayedNodeCount}/${nodes.length} nodes with gateway path`
-              : 'Relay overlay inactive · no simulated coverage'}
+      <div className="map-badge" role="note">
+        <span className="map-badge-dot" aria-hidden="true" />
+        SIMULATED COVERAGE — NOT RADIO PERFORMANCE
+      </div>
+
+      <div className="map-overlay map-overlay--topright">
+        <span className={`layer-chip${meshOn ? ' is-on' : ''}`}>MESH {meshOn ? 'ON' : 'OFF'}</span>
+        <span className={`layer-chip${network.gateway === 'connected' ? ' is-on' : ''}`}>
+          GATEWAY {network.gateway === 'connected' ? 'UP' : 'DOWN'}
         </span>
-        <span className="map-statusbar-tags">
-          <span className={`map-badge map-badge--${meshOn ? 'on' : 'off'}`}>MESH {meshOn ? 'ON' : 'OFF'}</span>
-          <span className={`map-badge map-badge--${network.gateway === 'connected' ? 'on' : 'off'}`}>
-            GATEWAY {network.gateway === 'connected' ? 'UP' : 'DOWN'}
-          </span>
-        </span>
-        <span className="map-caption map-caption--strong">
-          {selected ? `TRACKING ${selected.id} · ${selected.site.toUpperCase()}` : 'NO REPORT TRACKED · CLICK A MARKER'}
+        <span className={`layer-chip${network.normal === 'available' ? ' is-on' : ''}`}>
+          NET {network.normal === 'available' ? 'UP' : 'OUT'}
         </span>
       </div>
+
+      {selected && (
+        <div className="map-overlay map-overlay--tracked">
+          <span className="tracked-label">TRACKING</span>
+          <span className="tracked-id">{selected.id}</span>
+          <span className="tracked-site">{selected.site.toUpperCase()}</span>
+        </div>
+      )}
     </div>
   );
 }
